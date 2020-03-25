@@ -39,6 +39,7 @@ pub struct Collection {
     #[serde(default)]
     pub fields: Vec<Field>,
     pub partition_num: Option<u32>,
+    pub partition_replica_num: Option<u32>,
     pub partitions: Option<Vec<u32>>,
     pub slots: Option<Vec<u32>>,
     pub status: Option<CollectionStatus>,
@@ -61,6 +62,7 @@ pub struct Partition {
     pub collection_id: u32,
     pub leader: String,
     pub version: u64,
+    pub replicas: Vec<String>,
 }
 
 impl Partition {

@@ -8,8 +8,11 @@ use crate::sleep;
 use crate::util::time::*;
 use crate::util::{coding, config::Config, entity::*, error::*};
 use log::{error, info, warn};
+use std::cmp;
 use std::sync::Arc;
 use std::sync::{Mutex, RwLock};
+extern crate rand;
+use rand::Rng;
 
 pub struct MasterService {
     ps_cli: PsClient,
@@ -103,14 +106,14 @@ impl MasterService {
         collection.status = Some(CollectionStatus::CREATING);
         collection.modify_time = Some(current_millis());
 
-        //let zones = &collection.zones;
-        let need_num = collection.partition_num.unwrap();
+        let partition_num = collection.partition_num.unwrap();
+        let partition_replica_num = collection.partition_replica_num.unwrap();
 
-        // TODO default zone ID
         let server_list: Vec<PServer> = self
             .meta_service
             .list(entity_key::pserver_prefix().as_str())?;
 
+        let need_num = cmp::max(partition_num, partition_replica_num);
         if need_num as usize > server_list.len() {
             return Err(Box::from(err(format!(
                 "need pserver size:{} but all server is:{}",
@@ -119,8 +122,12 @@ impl MasterService {
             ))));
         }
         let mut use_list: Vec<PServer> = Vec::new();
+        let mut random = rand::thread_rng().gen_range(0, server_list.len());
         //from list_server find need_num for use
-        for s in server_list.iter() {
+        let mut index = random % server_list.len();
+        let mut detected_times = 1;
+        loop {
+            let s = server_list.get(index).unwrap();
             let ok = match self.ps_cli.status(s.addr.as_str()).await {
                 Ok(gr) => match gr.code as u16 {
                     ENGINE_WILL_CLOSE => false,
@@ -135,26 +142,47 @@ impl MasterService {
                 continue;
             }
             use_list.push(s.clone());
-            if use_list.len() >= need_num as usize {
+            if use_list.len() >= need_num as usize || detected_times >= server_list.len() {
                 break;
             }
+            index += 1;
+            detected_times += 1;
         }
 
-        let mut partitions = Vec::with_capacity(need_num as usize);
-        let mut pids = Vec::with_capacity(need_num as usize);
-        let mut slots = Vec::with_capacity(need_num as usize);
-        let range = u32::max_value() / need_num;
+        if need_num as usize > use_list.len() {
+            return Err(Box::from(err(format!(
+                "need pserver size:{} but available server is:{}",
+                need_num,
+                use_list.len()
+            ))));
+        }
 
+        let mut partitions = Vec::with_capacity(partition_num as usize);
+        let mut pids = Vec::with_capacity(partition_num as usize);
+        let mut slots = Vec::with_capacity(partition_num as usize);
+        let range = u32::max_value() / partition_num;
         for i in 0..need_num {
             let server = use_list.get(i as usize).unwrap();
             pids.push(i);
             slots.push(i * range);
+            let mut replicas: Vec<String> = Vec::new();
+            for j in 0..partition_replica_num {
+                replicas.push(
+                    use_list
+                        .get((i + j % need_num) as usize)
+                        .unwrap()
+                        .addr
+                        .to_string(),
+                );
+            }
             let partition = Partition {
                 id: i,
                 collection_id: seq,
                 leader: server.addr.to_string(),
                 version: 0,
+                replicas: replicas,
             };
+
             partitions.push(partition.clone());
         }
 

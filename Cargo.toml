@@ -34,7 +34,9 @@ uuid = { version = "0.8", features = ["v4"] }
 rocksdb = { version = "0.13", features = ["lz4"] }
 reqwest = { version = "0.10", features = ["json", "blocking"],default-features=false }
 git-version = "0.3.4"
+rand = "0.3"
 
+jimraft = { path = "../rust-jimraft", version = "0.1.0" }
 [build-dependencies]
 tonic-build = "0.1.1"
 
